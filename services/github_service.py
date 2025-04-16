@@ -25,22 +25,55 @@ class GitHubService:
         try:
             activities = []
             
-            # get public events
-            public_events = await self._fetch_events(f"https://api.github.com/users/{self.username}/events")
-            if not public_events:
-                logger.warning("No GitHub events found")
-                return []
+            # get PR data
+            pr_url = f"https://api.github.com/search/issues"
+            pr_params = {
+                "q": f"type:pr author:{self.username} updated:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}",
+                "sort": "updated",
+                "order": "desc"
+            }
             
-            for event in public_events:
-                try:
-                    event_time = datetime.strptime(event["created_at"], "%Y-%m-%dT%H:%M:%SZ")
-                    if start_date <= event_time <= end_date:
-                        activity = self._process_event(event)
-                        if activity:
-                            activities.append(activity)
-                except Exception as e:
-                    logger.error(f"Error processing event: {str(e)}")
+            pr_response = requests.get(pr_url, headers=self.headers, params=pr_params)
+            pr_response.raise_for_status()
+            pr_data = pr_response.json()
+            
+            for pr in pr_data.get('items', []):
+                activities.append({
+                    'type': 'pull_request',
+                    'title': pr['title'],
+                    'url': pr['html_url'],
+                    'date': pr['created_at'],
+                    'state': pr['state'],
+                    'repo': pr['repository_url'].split('/')[-1]
+                })
+            
+            # get review data
+            review_params = {
+                "q": f"type:pr reviewed-by:{self.username} updated:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}",
+                "sort": "updated",
+                "order": "desc"
+            }
+            
+            review_response = requests.get(pr_url, headers=self.headers, params=review_params)
+            review_response.raise_for_status()
+            review_data = review_response.json()
+            
+            # get the existing PR URL set
+            existing_pr_urls = {activity['url'] for activity in activities if activity['type'] == 'pull_request'}
+            
+            for review in review_data.get('items', []):
+                # if the PR is already in the PR list, skip
+                if review['html_url'] in existing_pr_urls:
                     continue
+                    
+                activities.append({
+                    'type': 'review',
+                    'title': review['title'],
+                    'url': review['html_url'],
+                    'date': review['updated_at'],
+                    'state': review['state'],
+                    'repo': review['repository_url'].split('/')[-1]
+                })
             
             # sort by time
             activities.sort(key=lambda x: x['date'], reverse=True)
@@ -49,76 +82,3 @@ class GitHubService:
         except Exception as e:
             logger.error(f"Error fetching GitHub data: {str(e)}")
             return []
-    
-    async def _fetch_events(self, url: str) -> List[Dict]:
-        try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error requesting GitHub API: {str(e)}")
-            if hasattr(e.response, 'text'):
-                logger.error(f"Error response: {e.response.text}")
-            return []
-        except Exception as e:
-            logger.error(f"Error fetching events: {str(e)}")
-            return []
-    
-    def _process_event(self, event: Dict) -> Dict:
-        try:
-            event_type = event["type"]
-            repo_name = event["repo"]["name"]
-            event_time = datetime.strptime(event["created_at"], "%Y-%m-%dT%H:%M:%SZ")
-            payload = event.get("payload", {})
-            
-            if event_type == "PushEvent":
-                commits = payload.get("commits", [])
-                if commits:
-                    return {
-                        'type': 'commit',
-                        'repo': repo_name,
-                        'message': commits[0]['message'],
-                        'date': event_time,
-                        'url': f"https://github.com/{repo_name}/commit/{commits[0]['sha']}"
-                    }
-            
-            elif event_type == "PullRequestEvent":
-                pr = payload.get("pull_request", {})
-                if pr:
-                    return {
-                        'type': 'pull_request',
-                        'repo': repo_name,
-                        'title': pr.get("title", ""),
-                        'state': pr.get("state", ""),
-                        'date': event_time,
-                        'url': pr.get("html_url", "")
-                    }
-            
-            elif event_type == "PullRequestReviewEvent":
-                review = payload.get("review", {})
-                if review:
-                    return {
-                        'type': 'review',
-                        'repo': repo_name,
-                        'title': f"Review {review.get('state', '')}",
-                        'state': review.get("state", ""),
-                        'date': event_time,
-                        'url': review.get("html_url", "")
-                    }
-            
-            elif event_type == "IssueCommentEvent":
-                comment = payload.get("comment", {})
-                if comment:
-                    return {
-                        'type': 'comment',
-                        'repo': repo_name,
-                        'title': f"Comment on {payload.get('issue', {}).get('title', '')}",
-                        'state': 'commented',
-                        'date': event_time,
-                        'url': comment.get("html_url", "")
-                    }
-            
-            return None
-        except Exception as e:
-            logger.error(f"Error processing event data: {str(e)}")
-            return None 
