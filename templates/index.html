@@ -23,7 +23,14 @@
         
         <div class="row mb-4">
             <div class="col">
-                <button id="generateReport" class="btn btn-primary">生成周报</button>
+                <div class="d-flex justify-content-between align-items-center">
+                    <button id="generateReport" class="btn btn-primary">生成周报</button>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-outline-primary" id="filterAll">全部</button>
+                        <button type="button" class="btn btn-outline-primary" id="filterJira">Jira</button>
+                        <button type="button" class="btn btn-outline-primary" id="filterGithub">GitHub</button>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -49,39 +56,66 @@
     </div>
 
     <script>
+        let currentReport = null;
+        
         document.getElementById('generateReport').addEventListener('click', async () => {
             try {
                 const response = await fetch('/api/generate-report');
                 const data = await response.json();
                 
                 if (data.status === 'success') {
-                    const report = data.report;
-                    
-                    // 显示摘要
-                    const summaryHtml = `
-                        <p>生成时间：${new Date(report.generated_at).toLocaleString()}</p>
-                        <p>Jira任务总数：${report.summary.total_jira_tasks}</p>
-                        <p>GitHub活动总数：${report.summary.total_github_activities}</p>
-                        <p>总活动数：${report.summary.total_activities}</p>
-                    `;
-                    document.getElementById('summaryContent').innerHTML = summaryHtml;
-                    
-                    // 显示活动列表
-                    const activitiesHtml = report.activities.map(activity => `
-                        <div class="card activity-card ${activity.type}-activity">
-                            <div class="card-body">
-                                <p class="card-text">${activity.content}</p>
-                                <small class="text-muted">${new Date(activity.date).toLocaleString()}</small>
-                            </div>
-                        </div>
-                    `).join('');
-                    document.getElementById('activitiesContent').innerHTML = activitiesHtml;
-                    
+                    currentReport = data.report;
+                    displayReport(currentReport);
                     document.getElementById('reportContainer').style.display = 'block';
                 }
             } catch (error) {
                 console.error('Error generating report:', error);
                 alert('生成报告时发生错误，请稍后重试。');
+            }
+        });
+
+        function displayReport(report, filter = 'all') {
+            // 显示摘要
+            const summaryHtml = `
+                <p>生成时间：${new Date(report.generated_at).toLocaleString()}</p>
+                <p>Jira任务总数：${report.summary.total_jira_tasks}</p>
+                <p>GitHub活动总数：${report.summary.total_github_activities}</p>
+                <p>总活动数：${report.summary.total_activities}</p>
+            `;
+            document.getElementById('summaryContent').innerHTML = summaryHtml;
+            
+            // 显示活动列表
+            const filteredActivities = filter === 'all' 
+                ? report.activities 
+                : report.activities.filter(activity => activity.type === filter);
+            
+            const activitiesHtml = filteredActivities.map(activity => `
+                <div class="card activity-card ${activity.type}-activity">
+                    <div class="card-body">
+                        <p class="card-text">${activity.content}</p>
+                        <small class="text-muted">${new Date(activity.date).toLocaleString()}</small>
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('activitiesContent').innerHTML = activitiesHtml;
+        }
+
+        // 添加过滤按钮事件监听
+        document.getElementById('filterAll').addEventListener('click', () => {
+            if (currentReport) {
+                displayReport(currentReport, 'all');
+            }
+        });
+
+        document.getElementById('filterJira').addEventListener('click', () => {
+            if (currentReport) {
+                displayReport(currentReport, 'jira');
+            }
+        });
+
+        document.getElementById('filterGithub').addEventListener('click', () => {
+            if (currentReport) {
+                displayReport(currentReport, 'github');
             }
         });
     </script>
