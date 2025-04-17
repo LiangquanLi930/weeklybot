@@ -71,3 +71,6 @@ http://localhost:8000
 - It's recommended to regularly update API tokens for security
 - If you encounter API rate limits, please adjust the request frequency accordingly
 - For production environments, it's recommended to set LOG_LEVEL to WARNING or ERROR 
+
+## Learn langchain demo
+[langchain learn demo](./langchain_demo.py)
