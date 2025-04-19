@@ -1,9 +1,9 @@
 from langchain_community.llms import Ollama
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from langchain_core.runnables import RunnablePassthrough, Runnable, RunnableLambda, RunnableConfig
 from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
-from typing import Dict, List
+from typing import Dict, List, Any
 import os
 from dotenv import load_dotenv
 
@@ -12,6 +12,78 @@ class QAOutput(BaseModel):
     answer: str = Field(description="The answer to the question")
     confidence: float = Field(description="Confidence level of the answer, range 0-1")
     supporting_points: List[str] = Field(description="Key points supporting the answer")
+    sub_question: List[str] = Field(description="Suggested sub-questions to explore the topic further")
+    sub_answer: List[str] = Field(description="Answers to the sub-questions")
+
+class QAChain(Runnable):
+    def __init__(self, llm):
+        self.output_parser = PydanticOutputParser(pydantic_object=QAOutput)
+        self.qa_prompt = PromptTemplate(
+            input_variables=["question", "context"],
+            template="""
+            Please answer the following question and sub-questions.
+            
+            Question:
+            {question}
+            Sub-questions:
+            {sub_question}
+            
+            Please return directly in JSON format, without any comments, explanations, leading words, or Markdown code blocks (like ```json).
+            Strictly follow this format:
+            {format_instructions}
+            """,
+            partial_variables={"format_instructions": self.output_parser.get_format_instructions()}
+        )   
+        self.chain = self.qa_prompt | llm | self.output_parser
+
+    def invoke(self, input, config=None):
+        # print("----------------------------------")
+        # print(input)
+        result = self.chain.invoke(input, config=config)
+        # print(result)
+        # print("----------------------------------") 
+        if isinstance(result, BaseModel):
+            return result.dict()
+        return result
+
+
+class QuestionRefinementOutput(BaseModel):
+    refined_question: str = Field(description="The refined and clearer version of the question")
+    additional_context: str = Field(description="Additional context or clarification points")
+    suggested_subquestions: List[str] = Field(description="Suggested sub-questions to explore the topic further")
+
+class QuestionRefinementChain(Runnable):
+    def __init__(self, llm):
+        self.output_parser = PydanticOutputParser(pydantic_object=QuestionRefinementOutput)
+        self.refinement_prompt = PromptTemplate(
+            input_variables=["question"],
+            template="""
+            You are an assistant that helps optimize questions. Your tasks are:
+            1. Optimize the given question to make it clearer and more specific
+            2. Provide additional context
+            3. Suggest relevant sub-questions
+
+            Original question:
+            {question}
+
+            Please return directly in JSON format, without any comments, explanations, leading words, or Markdown code blocks (like ```json).
+            Strictly follow this format:
+            {format_instructions}
+            """,
+            partial_variables={"format_instructions": self.output_parser.get_format_instructions()}
+        )   
+        self.chain = self.refinement_prompt | llm | self.output_parser
+
+    def invoke(self, input, config=None):
+        # print("+++++++++++++++++++++++++++++++++++++")
+        # print(input)
+        result = self.chain.invoke(input, config=config)
+        # print(result)
+        # print("+++++++++++++++++++++++++++++++++++++")
+        if isinstance(result, BaseModel):
+            return result.dict()
+        return result
+
 
 class LangChainDemo:
     def __init__(self):
@@ -27,59 +99,31 @@ class LangChainDemo:
             model=ollama_model,
             base_url=ollama_api_url
         )
-        
-        # Initialize output parser
-        self.output_parser = PydanticOutputParser(pydantic_object=QAOutput)
-        
-        # Create prompt template
-        self.qa_prompt = PromptTemplate(
-            input_variables=["question", "context"],
-            template="""
-            Please answer the question based on the following context. If the context is insufficient to answer the question, please explain why.
-            
-            Context:
-            {context}
-            
-            Question:
-            {question}
-            
-            Please return directly in JSON format, **do not add any comments, explanations, leading words, or Markdown code blocks (like ```json)**.
-            Return strictly in the following format:
-            {format_instructions}
-            """,
-            partial_variables={"format_instructions": self.output_parser.get_format_instructions()}
-        )
-        
-        # Create chain
-        self.qa_chain = LLMChain(
-            llm=self.llm, 
-            prompt=self.qa_prompt,
-            output_parser=self.output_parser
-        )
-    
-    def answer_question(self, question: str, context: str) -> Dict:
-        """
-        Answer a question
-        
-        Args:
-            question: Question text
-            context: Context information
-            
-        Returns:
-            Dict: Dictionary containing the answer
-        """
-        # Call the chain
-        response = self.qa_chain.invoke({
-            "question": question,
-            "context": context
-        })
-        qa_output: QAOutput = response["text"]
 
+        self.qr_chain = QuestionRefinementChain(llm=self.llm)
+        self.qa_chain = QAChain(llm=self.llm)
+    
+    def answer_question(self, question: str) -> Dict:
+        composed_chain = (
+            RunnablePassthrough.assign(
+                question=lambda x: x["question"]
+            )
+            | self.qr_chain
+            | RunnablePassthrough.assign(
+                question=lambda x: x["refined_question"],
+                sub_question=lambda x: x["suggested_subquestions"]
+            )
+            | self.qa_chain
+        )
+
+        result = composed_chain.invoke({"question": question})
         return {
             "question": question,
-            "answer": qa_output.answer,
-            "confidence": qa_output.confidence,
-            "supporting_points": qa_output.supporting_points
+            "answer": result["answer"],
+            "confidence": result["confidence"],
+            "supporting_points": result["supporting_points"],
+            "sub_question": result["sub_question"],
+            "sub_answer": result["sub_answer"]
         }
 
 # Usage example
@@ -87,23 +131,10 @@ if __name__ == "__main__":
     # Create instance
     demo = LangChainDemo()
     
-    # Example context and question
-    context = """
-    LangChain is a framework for developing applications powered by language models.
-    It provides many tools and components that enable developers to easily build complex applications.
-    LangChain supports multiple language models, including OpenAI, Anthropic, etc.
-    The main features of LangChain include:
-    1. Prompt template management
-    2. Chain calls
-    3. Memory functionality
-    4. Tool integration
-    5. Output parsing
-    """
-    
     question = "What is LangChain? What are its main features?"
     
     # Get answer
-    result = demo.answer_question(question, context)
+    result = demo.answer_question(question)
     
     print("Question:", result["question"])
     print("Answer:", result["answer"])
@@ -111,3 +142,9 @@ if __name__ == "__main__":
     print("Supporting points:")
     for point in result["supporting_points"]:
         print(f"- {point}") 
+    print("Sub-questions:")
+    for sub_question in result["sub_question"]:
+        print(f"- {sub_question}")
+    print("Sub-answers:")
+    for sub_answer in result["sub_answer"]:
+        print(f"- {sub_answer}")
