@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from services.jira_service import JiraService
 from services.github_service import GitHubService
 from services.report_service import ReportService
+from services.ai_report_service import AIReportService
 import logging
 import traceback
 
@@ -28,7 +29,8 @@ LOG_LEVELS = {
 # set the log level
 logging.basicConfig(
     level=LOG_LEVELS.get(LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ try:
     jira_service = JiraService()
     github_service = GitHubService()
     report_service = ReportService()
+    ai_report_service = AIReportService()
     services_initialized = True
     logger.info("Services initialized successfully")
 except Exception as e:
@@ -69,7 +72,7 @@ async def generate_report():
     try:
         # get the date range of the past week
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=7)
+        start_date = end_date - timedelta(days=14)
         
         logger.info(f"Starting report generation, time range: {start_date} to {end_date}")
         
@@ -80,11 +83,19 @@ async def generate_report():
         github_data = await github_service.get_weekly_activities(start_date, end_date)
         logger.info(f"Retrieved {len(github_data)} GitHub activities")
         
-        # generate report
-        report = report_service.generate_report(jira_data, github_data)
-        logger.info("Report generated successfully")
+        # generate both regular and AI-enhanced reports
+        regular_report = report_service.generate_report(jira_data, github_data)
+        ai_report = ai_report_service.generate_ai_report(jira_data, github_data)
         
-        return {"status": "success", "report": report}
+        # logger.info(f"Regular report: {regular_report}")    
+        logger.info(f"AI report: {ai_report['ai_report']}")
+        logger.info("Reports generated successfully")
+        
+        return {
+            "status": "success",
+            "report": regular_report,
+            "ai_report": ai_report['ai_report']
+        }
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}")
         logger.error(traceback.format_exc())
