@@ -2,6 +2,9 @@ from langchain_community.llms import Ollama
 from langchain.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough, Runnable, RunnableLambda, RunnableConfig
 from langchain.output_parsers import PydanticOutputParser
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain.memory import ConversationBufferMemory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from pydantic import BaseModel, Field
 from typing import Dict, List, Any
 import os
@@ -102,9 +105,8 @@ class LangChainDemo:
 
         self.qr_chain = QuestionRefinementChain(llm=self.llm)
         self.qa_chain = QAChain(llm=self.llm)
-    
-    def answer_question(self, question: str) -> Dict:
-        composed_chain = (
+
+        self.composed_chain = (
             RunnablePassthrough.assign(
                 question=lambda x: x["question"]
             )
@@ -116,7 +118,19 @@ class LangChainDemo:
             | self.qa_chain
         )
 
-        result = composed_chain.invoke({"question": question})
+        self.memory_chain = RunnableWithMessageHistory(
+            self.composed_chain,
+            lambda session_id: InMemoryChatMessageHistory(),  # create a new history for each session, here can also bind session_id
+            input_messages_key="question",
+            history_messages_key="history"
+        )
+
+    
+    def answer_question(self, question: str, session_id: str = "demo-session") -> Dict:
+        result = self.memory_chain.invoke(
+            {"question": question},
+            config={"configurable": {"session_id": session_id}}
+        )
         return {
             "question": question,
             "answer": result["answer"],
@@ -148,3 +162,12 @@ if __name__ == "__main__":
     print("Sub-answers:")
     for sub_answer in result["sub_answer"]:
         print(f"- {sub_answer}")
+
+    # ask another question, with context support
+    result2 = demo.answer_question("Can it help with retrieval tasks?")
+    print("Question:", result2["question"])
+    print("Answer:", result2["answer"])
+    print("Confidence:", result2["confidence"])
+    print("Supporting points:")
+    for point in result2["supporting_points"]:
+        print(f"- {point}")
