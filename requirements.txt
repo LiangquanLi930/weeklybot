@@ -11,6 +11,6 @@ cryptography>=3.4.0
 pyjwt[crypto]>=2.4.0
 langchain==0.2.17
 langchain-community==0.2.19
-langchain-core==0.2.43
+langchain-core==1.2.11
 langchain-text-splitters==0.2.4
 ollama==0.3.0 
